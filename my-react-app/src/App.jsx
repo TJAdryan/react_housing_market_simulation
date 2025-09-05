@@ -14,6 +14,8 @@ const RE_ENTRANT_RATE = 0.75;
 const STR_CONVERSION_CHANCE = 0.05;
 const STR_CAP_RATE = 0.03;
 const MAX_RENT_INCREASE = 0.08;
+const LANDLORD_PURCHASE_RATIO = 0.35; // Combined chance for a landlord to win a bid (35%)
+const LANDLORD_OWNERSHIP_CAP = 0.50; // Cap landlord ownership at 50% of total housing
 
 // --- Helper Components ---
 const Card = ({ label, value, subValue }) => (
@@ -31,10 +33,8 @@ export default function App() {
   const [newHomes, setNewHomes] = useState(3);
   const [yearsToRun, setYearsToRun] = useState(10); 
   const [initialSeekersCount, setInitialSeekersCount] = useState(36);
-  // Add user-configurable starting owner counts
   const [initialHomeowners, setInitialHomeowners] = useState(170);
-  const [initialIndividuals, setInitialIndividuals] = useState(100);
-  const [initialCorporates, setInitialCorporates] = useState(30);
+  const [initialLandlords, setInitialLandlords] = useState(130);
   
   // --- Simulation State (runs the model) ---
   const [year, setYear] = useState(1);
@@ -65,7 +65,7 @@ export default function App() {
   const getPercentChange = (initial, current) => {
     if (initial === 0 || !initial) return 'N/A';
     const change = ((current - initial) / initial) * 100;
-  const color = change >= 0 ? 'text-green-600' : 'text-red-600';
+    const color = change >= 0 ? 'text-green-600' : 'text-red-600';
     return <span className={color}>{`${change >= 0 ? '+' : ''}${change.toFixed(1)}%`}</span>;
   };
   
@@ -74,7 +74,7 @@ export default function App() {
     const currentTotals = stock.reduce((acc, home) => {
       if (home.ownerType) acc[home.ownerType] = (acc[home.ownerType] || 0) + 1;
       return acc;
-    }, { homeowner: 0, individual: 0, corporate: 0 });
+    }, { homeowner: 0, landlord: 0 });
 
     const prices = stock.map(h => h.price).sort((a,b)=>a-b);
     const medianPrice = prices.length > 0 ? prices[Math.floor(prices.length/2)] : 0;
@@ -89,12 +89,14 @@ export default function App() {
     const incomes = seekers.map(s => s.income).sort((a,b)=>a-b);
     const medianIncome = incomes.length > 0 ? incomes[Math.floor(incomes.length/2)] : 0;
 
-    // Calculate total rent paid by all renters (occupied rental units)
     const totalRentPaid = stock.filter(h => h.ownerType !== 'homeowner' && h.status === 'Occupied').reduce((sum, h) => sum + h.rent, 0);
-    // Calculate total income of the whole population
     const totalIncome = seekers.reduce((sum, s) => sum + s.income, 0);
-    // Compute percent of income dedicated to rent
     const pctIncomeToRent = (totalIncome > 0) ? ((totalRentPaid / totalIncome) * 100).toFixed(1) : 'N/A';
+    
+    const housedPopulation = stock.filter(h => h.status === 'OwnerOccupied' || h.status === 'Occupied').length;
+    const totalPopulation = housedPopulation + seekers.length;
+    const mortgageEligible = seekers.filter(s => s.income * AFFORDABILITY_MULTIPLIER >= medianPrice).length;
+
     setDisplayData({
         seekerCount: seekers.length,
         vacantRentals,
@@ -103,16 +105,16 @@ export default function App() {
         medianPrice,
         medianRent,
         homeowners: currentTotals.homeowner,
-        individualLandlords: currentTotals.individual,
-        corporateLandlords: currentTotals.corporate,
+        landlords: currentTotals.landlord,
         totalHomes: stock.length,
         pctOwnerOccupied: getPercentChange(initial.ownerOccupied, currentTotals.homeowner),
-        pctIndividualLandlords: getPercentChange(initial.individualLandlords, currentTotals.individual),
-        pctCorporateLandlords: getPercentChange(initial.corporateLandlords, currentTotals.corporate),
+        pctLandlords: getPercentChange(initial.landlords, currentTotals.landlord),
         pctMedianPrice: getPercentChange(initial.medianPrice, medianPrice),
         pctMedianRent: getPercentChange(initial.medianRent, medianRent),
         pctMedianIncome: getPercentChange(initial.medianIncome, medianIncome),
         pctIncomeToRent,
+        totalPopulation,
+        mortgageEligible,
     });
   }, []);
 
@@ -122,7 +124,7 @@ export default function App() {
     seededRandom.current = createSeededRandom(INITIAL_SEED);
     cumulativeIncomeGrowth.current = 1.0;
     marketResults.current = {
-        purchasesByHomeowner: 0, purchasesByCorporate: 0, purchasesByIndividual: 0,
+        purchasesByHomeowner: 0, purchasesByLandlord: 0,
         convertedToShortTerm: 0, totalAttrition: 0, displacements: 0,
     };
     
@@ -141,31 +143,20 @@ export default function App() {
     const initialPrices = generateSortedData(HOMES_TOTAL, 350000, 1000);
     const initialIncomes = generateSortedData(initialSeekersCount, 100000, 500);
     
-    // Ensure total is always 300
-    const totalOwners = initialHomeowners + initialIndividuals + initialCorporates;
-    const homeowners = initialHomeowners;
-    const individuals = initialIndividuals;
-    const corporates = initialCorporates;
-    // If total is not 300, adjust corporates to fit
-    let adjHomeowners = homeowners;
-    let adjIndividuals = individuals;
-    let adjCorporates = corporates;
-    if (totalOwners !== HOMES_TOTAL) {
-      const diff = HOMES_TOTAL - (homeowners + individuals);
-      adjCorporates = diff;
+    let adjHomeowners = initialHomeowners;
+    let adjLandlords = initialLandlords;
+    if (adjHomeowners + adjLandlords !== HOMES_TOTAL) {
+      adjLandlords = HOMES_TOTAL - adjHomeowners;
     }
-    // Build housing stock based on user input
+
     const newHousingStock = Array.from({ length: HOMES_TOTAL }, (_, i) => {
-      let ownerType;
-      if (i < adjCorporates) ownerType = 'corporate';
-      else if (i < adjCorporates + adjIndividuals) ownerType = 'individual';
-      else ownerType = 'homeowner';
+      const ownerType = i < adjLandlords ? 'landlord' : 'homeowner';
       
       const price = initialPrices[i];
       let usage = (i < 3) ? 'ShortTermRental' : 'LongTermRental';
       let status;
       if (ownerType === 'homeowner') status = 'OwnerOccupied';
-  else status = seededRandom.current() < Math.max(INITIAL_VACANCY_RATE, 0.015) ? 'Vacant' : 'Occupied';
+      else status = seededRandom.current() < Math.max(INITIAL_VACANCY_RATE, 0.015) ? 'Vacant' : 'Occupied';
       
       const rentSpread = (price / 350000);
       const rent = 2000 * rentSpread + (seededRandom.current() - 0.5) * 100;
@@ -178,29 +169,26 @@ export default function App() {
         income: initialIncomes[i]
     }));
     
-  // Calculate true medians from generated data
-  const ownerOccupied = newHousingStock.filter(h => h.ownerType === 'homeowner').length;
-  const individualLandlords = newHousingStock.filter(h => h.ownerType === 'individual').length;
-  const corporateLandlords = newHousingStock.filter(h => h.ownerType === 'corporate').length;
-  const prices = newHousingStock.map(h => h.price).sort((a,b)=>a-b);
-  const medianPrice = prices.length > 0 ? prices[Math.floor(prices.length/2)] : 0;
-  const rents = newHousingStock.filter(h => h.ownerType !== 'homeowner').map(h => h.rent).sort((a,b)=>a-b);
-  const medianRent = rents.length > 0 ? rents[Math.floor(rents.length/2)] : 0;
-  const incomes = newSeekerPool.map(s => s.income).sort((a,b)=>a-b);
-  const medianIncome = incomes.length > 0 ? incomes[Math.floor(incomes.length/2)] : 0;
-  initialStats.current = {
-    ownerOccupied,
-    individualLandlords,
-    corporateLandlords,
-    medianPrice,
-    medianRent,
-    medianIncome,
-  };
+    const ownerOccupied = newHousingStock.filter(h => h.ownerType === 'homeowner').length;
+    const landlords = newHousingStock.filter(h => h.ownerType === 'landlord').length;
+    const prices = newHousingStock.map(h => h.price).sort((a,b)=>a-b);
+    const medianPrice = prices.length > 0 ? prices[Math.floor(prices.length/2)] : 0;
+    const rents = newHousingStock.filter(h => h.ownerType !== 'homeowner').map(h => h.rent).sort((a,b)=>a-b);
+    const medianRent = rents.length > 0 ? rents[Math.floor(rents.length/2)] : 0;
+    const incomes = newSeekerPool.map(s => s.income).sort((a,b)=>a-b);
+    const medianIncome = incomes.length > 0 ? incomes[Math.floor(incomes.length/2)] : 0;
+    initialStats.current = {
+      ownerOccupied,
+      landlords,
+      medianPrice,
+      medianRent,
+      medianIncome,
+    };
 
     setHousingStock(newHousingStock);
     setSeekerPool(newSeekerPool);
     computeDisplayData(newHousingStock, newSeekerPool, initialStats.current);
-  }, [initialSeekersCount, computeDisplayData]);
+  }, [initialSeekersCount, initialHomeowners, initialLandlords, computeDisplayData]);
 
   const advanceYear = useCallback(() => {
     const newStock = structuredClone(housingStock);
@@ -238,21 +226,14 @@ export default function App() {
     const sellProperty = (home) => {
       const affordableSeekers = newSeekerPool.filter(s => s.income * AFFORDABILITY_MULTIPLIER >= home.price);
       const seekerInTheRunning = affordableSeekers.length > 0;
-      const roll = seededRandom.current();
-      let winnerType;
-  
-      if (seekerInTheRunning) {
-  if (roll < 0.20) winnerType = 'corporate';
-  else if (roll < 0.35) winnerType = 'individual';
-  else winnerType = 'seeker';
-      } else {
-        if (roll < 0.71) winnerType = 'corporate';
-        else winnerType = 'individual';
-      }
-  
-      const corporateOwnershipRatio = newStock.filter(h => h.ownerType === 'corporate').length / newStock.length;
-      if (winnerType === 'corporate' && corporateOwnershipRatio >= 0.30) {
-        winnerType = seekerInTheRunning ? (seededRandom.current() < (25/40) ? 'individual' : 'seeker') : 'individual';
+      
+      let winnerType = seekerInTheRunning 
+        ? (seededRandom.current() < LANDLORD_PURCHASE_RATIO ? 'landlord' : 'seeker')
+        : 'landlord';
+      
+      const landlordOwnershipRatio = newStock.filter(h => h.ownerType === 'landlord').length / newStock.length;
+      if (winnerType === 'landlord' && landlordOwnershipRatio >= LANDLORD_OWNERSHIP_CAP && seekerInTheRunning) {
+        winnerType = 'seeker';
       }
   
       const processWinner = (type) => {
@@ -269,8 +250,8 @@ export default function App() {
                 newSeekerPool.push({ id: nextSeekerId.current++, income: baseIncome * cumulativeIncomeGrowth.current });
                 marketResults.current.displacements++;
             }
-        } else {
-            if(home.ownerType !== type) marketResults.current[type === 'corporate' ? 'purchasesByCorporate' : 'purchasesByIndividual']++;
+        } else { // type === 'landlord'
+            if(home.ownerType !== type) marketResults.current.purchasesByLandlord++;
             home.ownerType = type;
             const strRatio = newStock.filter(h => h.usage === 'ShortTermRental').length / newStock.length;
             if (strRatio < STR_CAP_RATE && seededRandom.current() < STR_CONVERSION_CHANCE) {
@@ -293,17 +274,16 @@ export default function App() {
         sellProperty(newHome);
     }
 
-  // Enforce minimum vacancy rate of 1.5%
-  const totalRentals = newStock.filter(h => h.ownerType !== 'homeowner' && h.usage === 'LongTermRental').length;
-  const minVacant = Math.ceil(totalRentals * 0.015);
-  let vacantUnits = newStock.filter(home => home.status === 'Vacant' && home.usage === 'LongTermRental');
-  newSeekerPool.sort(() => seededRandom.current() - 0.5);
-  vacantUnits.forEach((unit, idx) => {
-    if (newSeekerPool.length > 0 && idx >= minVacant) {
-      unit.status = 'Occupied';
-      newSeekerPool.shift();
-    }
-  });
+    const totalRentals = newStock.filter(h => h.ownerType !== 'homeowner' && h.usage === 'LongTermRental').length;
+    const minVacant = Math.ceil(totalRentals * 0.015);
+    let vacantUnits = newStock.filter(home => home.status === 'Vacant' && home.usage === 'LongTermRental');
+    newSeekerPool.sort(() => seededRandom.current() - 0.5);
+    vacantUnits.forEach((unit, idx) => {
+      if (newSeekerPool.length > 0 && idx >= minVacant) {
+        unit.status = 'Occupied';
+        newSeekerPool.shift();
+      }
+    });
 
     const unhousedSeekers = newSeekerPool.length;
     const appreciationRate = BASE_APPRECIATION + (unhousedSeekers * 0.0005) + ((3-newHomes) * 0.01);
@@ -319,7 +299,6 @@ export default function App() {
     setSeekerPool(newSeekerPool);
     setYear(prevYear => prevYear + 1);
     computeDisplayData(newStock, newSeekerPool, initialStats.current);
-
   }, [housingStock, seekerPool, turnoverRate, newHomes, computeDisplayData]);
 
   // --- Effects ---
@@ -345,6 +324,8 @@ export default function App() {
     setNewHomes(3);
     setYearsToRun(10);
     setInitialSeekersCount(36);
+    setInitialHomeowners(170);
+    setInitialLandlords(130);
     setSimulationSpeed(500);
     setupSimulation();
   };
@@ -362,7 +343,6 @@ export default function App() {
             <div className="flex flex-col items-center gap-4">
                 <div className="flex flex-wrap gap-4 items-center justify-center">
                     <div className="bg-white p-3 rounded-lg shadow flex gap-4 items-center">
-                        {/* Sale Turnover, New Homes, Seekers, Homeowners, Individuals, Corporates */}
                         <div>
                             <label className="text-xs font-medium text-gray-500 block">Sale Turnover (%)</label>
                             <input type="number" value={turnoverRate} onChange={e => setTurnoverRate(Number(e.target.value))} className="w-24 p-1 border rounded-md text-center"/>
@@ -380,12 +360,8 @@ export default function App() {
                             <input type="number" value={initialHomeowners} min={0} max={HOMES_TOTAL} onChange={e => setInitialHomeowners(Number(e.target.value))} className="w-20 p-1 border rounded-md text-center" />
                         </div>
                         <div>
-                            <label className="text-xs font-medium text-gray-500 block">Individual Landlords</label>
-                            <input type="number" value={initialIndividuals} min={0} max={HOMES_TOTAL} onChange={e => setInitialIndividuals(Number(e.target.value))} className="w-20 p-1 border rounded-md text-center" />
-                        </div>
-                        <div>
-                            <label className="text-xs font-medium text-gray-500 block">Corporate Owners</label>
-                            <input type="number" value={initialCorporates} min={0} max={HOMES_TOTAL} onChange={e => setInitialCorporates(Number(e.target.value))} className="w-20 p-1 border rounded-md text-center" />
+                            <label className="text-xs font-medium text-gray-500 block">Landlords</label>
+                            <input type="number" value={initialLandlords} min={0} max={HOMES_TOTAL} onChange={e => setInitialLandlords(Number(e.target.value))} className="w-20 p-1 border rounded-md text-center" />
                         </div>
                     </div>
                 </div>
@@ -403,41 +379,36 @@ export default function App() {
         
         <main>
           <h3 className="text-2xl font-bold text-center mb-4">Current Market Stats</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-4 mb-8">
-            <Card label="Population Seeking Housing" value={displayData.seekerCount} subValue="Seeking Homes"/>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+            <Card label="Total Population" value={displayData.totalPopulation} subValue="Housed & Seeking" />
+            <Card label="Seeking Housing" value={displayData.seekerCount} />
+            <Card label="Mortgage-Eligible Seekers" value={displayData.mortgageEligible} subValue="Can Afford Median Home" />
             <Card label="Vacant Rental Units" value={displayData.vacantRentals} subValue={`${displayData.vacancyRate} Rate`} />
-            <Card label="Median Seeker Income" value={`$${Math.round((displayData.medianIncome || 0)/1000)}k`} subValue={displayData.pctMedianIncome} />
+            <Card label="% Income to Rent" value={`${displayData.pctIncomeToRent}%`} />
             <Card label="Median Home Price" value={`$${Math.round((displayData.medianPrice || 0) / 1000)}k`} subValue={displayData.pctMedianPrice} />
             <Card label="Median Rent" value={`$${Math.round(displayData.medianRent || 0).toLocaleString()}`} subValue={displayData.pctMedianRent} />
+            <Card label="Median Seeker Income" 
+                  value={displayData.seekerCount > 0 ? `$${Math.round((displayData.medianIncome || 0)/1000)}k` : 'N/A'} 
+                  subValue={displayData.pctMedianIncome} />
             <Card label="Homeowners" value={displayData.homeowners} subValue={displayData.pctOwnerOccupied} />
-            <Card label="Individual Landlords" value={displayData.individualLandlords} subValue={displayData.pctIndividualLandlords} />
-            <Card label="Corporate Landlords" value={displayData.corporateLandlords} subValue={displayData.pctCorporateLandlords} />
-            <Card label="% Income to Rent" value={`${displayData.pctIncomeToRent}%`} subValue="of Population Income" />
+            <Card label="Landlords" value={displayData.landlords} subValue={displayData.pctLandlords} />
           </div>
 
           <div id="housing-visual-grid" className="grid grid-cols-30 gap-0.5 p-1 bg-gray-300 rounded-lg mx-auto">
             {[...housingStock]
               .sort((a, b) => {
-                // Group ShortTermRental (purple) first, then by status
-                const usageOrder = {
-                  'ShortTermRental': 0,
-                  'LongTermRental': 1
-                };
-                const statusOrder = {
-                  'OwnerOccupied': 0,
-                  'Occupied': 1,
-                  'Vacant': 2
-                };
+                const usageOrder = {'ShortTermRental': 0, 'LongTermRental': 1};
+                const statusOrder = {'OwnerOccupied': 0, 'Occupied': 1, 'Vacant': 2};
                 const usageDiff = usageOrder[a.usage] - usageOrder[b.usage];
                 if (usageDiff !== 0) return usageDiff;
                 return statusOrder[a.status] - statusOrder[b.status];
               })
               .map(home => {
                 let fill = '#9ca3af'; // gray-400
-                if (home.usage === 'ShortTermRental') fill = '#a21caf'; // purple-500
-                else if (home.status === 'OwnerOccupied') fill = '#22c55e'; // green-500
-                else if (home.status === 'Occupied') fill = '#1e40af'; // blue-800
-                else if (home.status === 'Vacant') fill = '#60a5fa'; // blue-400
+                if (home.usage === 'ShortTermRental') fill = '#a21caf';
+                else if (home.status === 'OwnerOccupied') fill = '#22c55e';
+                else if (home.status === 'Occupied') fill = '#1e40af';
+                else if (home.status === 'Vacant') fill = '#60a5fa';
                 return (
                   <svg key={home.id} width="36" height="36" viewBox="0 0 24 24" className="mx-auto" style={{height: '2.25rem', width: '2.25rem'}}>
                     <rect x="6" y="10" width="12" height="8" rx="2" fill={fill} />
@@ -459,8 +430,7 @@ export default function App() {
            <h3 className="text-2xl font-bold text-center mb-4">Cumulative Market Activity</h3>
            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-4 mb-4">
                <Card label="Homeowner Purchases" value={marketResults.current.purchasesByHomeowner} />
-               <Card label="Corporate Purchases" value={marketResults.current.purchasesByCorporate} />
-               <Card label="Individual Purchases" value={marketResults.current.purchasesByIndividual} />
+               <Card label="Landlord Purchases" value={marketResults.current.purchasesByLandlord} />
                <Card label="Converted to STR" value={marketResults.current.convertedToShortTerm} />
                <Card label="Displacements" value={marketResults.current.displacements} />
                <Card label="Total Attrition" value={marketResults.current.totalAttrition} />
