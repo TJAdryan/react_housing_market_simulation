@@ -17,7 +17,7 @@ const MAX_RENT_INCREASE = 0.08;
 const LANDLORD_PURCHASE_RATIO = 0.35;
 const LANDLORD_OWNERSHIP_CAP = 0.50;
 
-// --- NEW: Income Distribution Constants ---
+// --- Income Distribution Constants ---
 const INCOME_TIERS = {
   bottom: { percent: 0.70, range: [40000, 80000] },
   middle: { percent: 0.25, range: [80001, 150000] },
@@ -41,8 +41,8 @@ export default function App() {
   const [newHomes, setNewHomes] = useState(3);
   const [yearsToRun, setYearsToRun] = useState(10); 
   const [initialSeekersCount, setInitialSeekersCount] = useState(36);
-  const [initialHomeowners, setInitialHomeowners] = useState(170);
-  const [initialLandlords, setInitialLandlords] = useState(130);
+  const [initialHomeowners, setInitialHomeowners] = useState(198);
+  const [initialLandlords, setInitialLandlords] = useState(102);
   
   // --- Simulation State (runs the model) ---
   const [year, setYear] = useState(1);
@@ -136,7 +136,6 @@ export default function App() {
         convertedToShortTerm: 0, totalAttrition: 0, displacements: 0,
     };
     
-    // UPDATED: New function for generating incomes based on tiers
     const generateTieredIncomes = (count) => {
         const incomes = [];
         const randomInRange = (min, max) => min + seededRandom.current() * (max - min);
@@ -165,7 +164,6 @@ export default function App() {
     };
 
     const initialPrices = generateSortedData(HOMES_TOTAL, 350000, 1000);
-    // UPDATED: Call the new tiered income generator
     const initialIncomes = generateTieredIncomes(initialSeekersCount);
     
     let adjHomeowners = initialHomeowners;
@@ -220,7 +218,6 @@ export default function App() {
     const housedPopulation = newStock.filter(h => h.status !== 'Vacant').length;
     const newEntrantCount = Math.floor((housedPopulation + newSeekerPool.length) * POPULATION_GROWTH_RATE);
 
-    // UPDATED: New entrants are now assigned incomes based on the tiered system
     const randomInRange = (min, max) => min + seededRandom.current() * (max - min);
     for (let i = 0; i < newEntrantCount; i++) {
       const roll = seededRandom.current();
@@ -283,7 +280,6 @@ export default function App() {
             const buyerId = affordableSeekers[0].id;
             newSeekerPool = newSeekerPool.filter(s => s.id !== buyerId);
             if (wasOccupiedRental) {
-                // Displaced tenants also re-enter with a tiered income
                 const roll = seededRandom.current();
                 let baseIncome;
                 if (roll < INCOME_TIERS.top.percent) {
@@ -370,8 +366,8 @@ export default function App() {
     setNewHomes(3);
     setYearsToRun(10);
     setInitialSeekersCount(36);
-    setInitialHomeowners(170);
-    setInitialLandlords(130);
+    setInitialHomeowners(198);
+    setInitialLandlords(102);
     setSimulationSpeed(500);
     setupSimulation();
   };
