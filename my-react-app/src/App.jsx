@@ -14,8 +14,16 @@ const RE_ENTRANT_RATE = 0.75;
 const STR_CONVERSION_CHANCE = 0.05;
 const STR_CAP_RATE = 0.03;
 const MAX_RENT_INCREASE = 0.08;
-const LANDLORD_PURCHASE_RATIO = 0.35; // Combined chance for a landlord to win a bid (35%)
-const LANDLORD_OWNERSHIP_CAP = 0.50; // Cap landlord ownership at 50% of total housing
+const LANDLORD_PURCHASE_RATIO = 0.35;
+const LANDLORD_OWNERSHIP_CAP = 0.50;
+
+// --- NEW: Income Distribution Constants ---
+const INCOME_TIERS = {
+  bottom: { percent: 0.70, range: [40000, 80000] },
+  middle: { percent: 0.25, range: [80001, 150000] },
+  top:    { percent: 0.05, range: [150001, 500000] }
+};
+
 
 // --- Helper Components ---
 const Card = ({ label, value, subValue }) => (
@@ -128,6 +136,22 @@ export default function App() {
         convertedToShortTerm: 0, totalAttrition: 0, displacements: 0,
     };
     
+    // UPDATED: New function for generating incomes based on tiers
+    const generateTieredIncomes = (count) => {
+        const incomes = [];
+        const randomInRange = (min, max) => min + seededRandom.current() * (max - min);
+
+        const topCount = Math.floor(count * INCOME_TIERS.top.percent);
+        const middleCount = Math.floor(count * INCOME_TIERS.middle.percent);
+        const bottomCount = count - topCount - middleCount;
+
+        for (let i = 0; i < topCount; i++) incomes.push(randomInRange(...INCOME_TIERS.top.range));
+        for (let i = 0; i < middleCount; i++) incomes.push(randomInRange(...INCOME_TIERS.middle.range));
+        for (let i = 0; i < bottomCount; i++) incomes.push(randomInRange(...INCOME_TIERS.bottom.range));
+
+        return incomes.sort((a,b) => a-b);
+    };
+
     const generateSortedData = (count, median, spread) => {
         const data = [median];
         for(let i = 1; i <= Math.floor((count - 1) / 2); i++) {
@@ -141,7 +165,8 @@ export default function App() {
     };
 
     const initialPrices = generateSortedData(HOMES_TOTAL, 350000, 1000);
-    const initialIncomes = generateSortedData(initialSeekersCount, 100000, 500);
+    // UPDATED: Call the new tiered income generator
+    const initialIncomes = generateTieredIncomes(initialSeekersCount);
     
     let adjHomeowners = initialHomeowners;
     let adjLandlords = initialLandlords;
@@ -151,16 +176,13 @@ export default function App() {
 
     const newHousingStock = Array.from({ length: HOMES_TOTAL }, (_, i) => {
       const ownerType = i < adjLandlords ? 'landlord' : 'homeowner';
-      
       const price = initialPrices[i];
       let usage = (i < 3) ? 'ShortTermRental' : 'LongTermRental';
       let status;
       if (ownerType === 'homeowner') status = 'OwnerOccupied';
       else status = seededRandom.current() < Math.max(INITIAL_VACANCY_RATE, 0.015) ? 'Vacant' : 'Occupied';
-      
       const rentSpread = (price / 350000);
       const rent = 2000 * rentSpread + (seededRandom.current() - 0.5) * 100;
-
       return { id: i, ownerType, usage, price, rent, status };
     });
     
@@ -178,11 +200,7 @@ export default function App() {
     const incomes = newSeekerPool.map(s => s.income).sort((a,b)=>a-b);
     const medianIncome = incomes.length > 0 ? incomes[Math.floor(incomes.length/2)] : 0;
     initialStats.current = {
-      ownerOccupied,
-      landlords,
-      medianPrice,
-      medianRent,
-      medianIncome,
+      ownerOccupied, landlords, medianPrice, medianRent, medianIncome,
     };
 
     setHousingStock(newHousingStock);
@@ -201,8 +219,19 @@ export default function App() {
     
     const housedPopulation = newStock.filter(h => h.status !== 'Vacant').length;
     const newEntrantCount = Math.floor((housedPopulation + newSeekerPool.length) * POPULATION_GROWTH_RATE);
+
+    // UPDATED: New entrants are now assigned incomes based on the tiered system
+    const randomInRange = (min, max) => min + seededRandom.current() * (max - min);
     for (let i = 0; i < newEntrantCount; i++) {
-      const baseIncome = 100000 - 50000 + seededRandom.current() * 100000;
+      const roll = seededRandom.current();
+      let baseIncome;
+      if (roll < INCOME_TIERS.top.percent) {
+        baseIncome = randomInRange(...INCOME_TIERS.top.range);
+      } else if (roll < INCOME_TIERS.top.percent + INCOME_TIERS.middle.percent) {
+        baseIncome = randomInRange(...INCOME_TIERS.middle.range);
+      } else {
+        baseIncome = randomInRange(...INCOME_TIERS.bottom.range);
+      }
       newSeekerPool.push({ id: nextSeekerId.current++, income: baseIncome * cumulativeIncomeGrowth.current });
     }
 
@@ -217,8 +246,16 @@ export default function App() {
         if (home.ownerType !== 'homeowner' && home.status === 'Occupied' && seededRandom.current() < RENTAL_TURNOVER_RATE) {
             home.status = 'Vacant';
             if (seededRandom.current() < RE_ENTRANT_RATE) {
-                const baseIncome = 100000 - 50000 + seededRandom.current() * 100000;
-                newSeekerPool.push({ id: nextSeekerId.current++, income: baseIncome * cumulativeIncomeGrowth.current });
+              const roll = seededRandom.current();
+              let baseIncome;
+              if (roll < INCOME_TIERS.top.percent) {
+                  baseIncome = randomInRange(...INCOME_TIERS.top.range);
+              } else if (roll < INCOME_TIERS.top.percent + INCOME_TIERS.middle.percent) {
+                  baseIncome = randomInRange(...INCOME_TIERS.middle.range);
+              } else {
+                  baseIncome = randomInRange(...INCOME_TIERS.bottom.range);
+              }
+              newSeekerPool.push({ id: nextSeekerId.current++, income: baseIncome * cumulativeIncomeGrowth.current });
             }
         }
     });
@@ -246,7 +283,16 @@ export default function App() {
             const buyerId = affordableSeekers[0].id;
             newSeekerPool = newSeekerPool.filter(s => s.id !== buyerId);
             if (wasOccupiedRental) {
-                const baseIncome = 100000 - 50000 + seededRandom.current() * 100000;
+                // Displaced tenants also re-enter with a tiered income
+                const roll = seededRandom.current();
+                let baseIncome;
+                if (roll < INCOME_TIERS.top.percent) {
+                    baseIncome = randomInRange(...INCOME_TIERS.top.range);
+                } else if (roll < INCOME_TIERS.top.percent + INCOME_TIERS.middle.percent) {
+                    baseIncome = randomInRange(...INCOME_TIERS.middle.range);
+                } else {
+                    baseIncome = randomInRange(...INCOME_TIERS.bottom.range);
+                }
                 newSeekerPool.push({ id: nextSeekerId.current++, income: baseIncome * cumulativeIncomeGrowth.current });
                 marketResults.current.displacements++;
             }
@@ -428,7 +474,7 @@ export default function App() {
            <hr className="my-10" />
            
            <h3 className="text-2xl font-bold text-center mb-4">Cumulative Market Activity</h3>
-           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-4 mb-4">
+           <div className="grid grid-cols-2 md:grid-cols-3 lg-grid-cols-3 gap-4 mb-4">
                <Card label="Homeowner Purchases" value={marketResults.current.purchasesByHomeowner} />
                <Card label="Landlord Purchases" value={marketResults.current.purchasesByLandlord} />
                <Card label="Converted to STR" value={marketResults.current.convertedToShortTerm} />
