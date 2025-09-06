@@ -101,7 +101,10 @@ export default function App() {
     const totalIncome = seekers.reduce((sum, s) => sum + s.income, 0);
     const pctIncomeToRent = (totalIncome > 0) ? ((totalRentPaid / totalIncome) * 100).toFixed(1) : 'N/A';
     
-    const housedPopulation = stock.filter(h => h.status === 'OwnerOccupied' || h.status === 'Occupied').length;
+    const housedPopulation = stock.filter(h => 
+      h.usage !== 'ShortTermRental' && 
+      (h.status === 'OwnerOccupied' || h.status === 'Occupied')
+    ).length;
     const totalPopulation = housedPopulation + seekers.length;
     const mortgageEligible = seekers.filter(s => s.income * AFFORDABILITY_MULTIPLIER >= medianPrice).length;
 
@@ -133,7 +136,7 @@ export default function App() {
     cumulativeIncomeGrowth.current = 1.0;
     marketResults.current = {
         purchasesByHomeowner: 0, purchasesByLandlord: 0,
-        convertedToShortTerm: 0, totalAttrition: 0, displacements: 0,
+        convertedToShortTerm: 0, displacements: 0,
     };
     
     const generateTieredIncomes = (count) => {
@@ -175,10 +178,19 @@ export default function App() {
     const newHousingStock = Array.from({ length: HOMES_TOTAL }, (_, i) => {
       const ownerType = i < adjLandlords ? 'landlord' : 'homeowner';
       const price = initialPrices[i];
-      let usage = (i < 3) ? 'ShortTermRental' : 'LongTermRental';
+      const usage = (i < 3) ? 'ShortTermRental' : 'LongTermRental';
       let status;
-      if (ownerType === 'homeowner') status = 'OwnerOccupied';
-      else status = seededRandom.current() < Math.max(INITIAL_VACANCY_RATE, 0.015) ? 'Vacant' : 'Occupied';
+
+      if (ownerType === 'homeowner') {
+        status = 'OwnerOccupied';
+      } else { // It's a landlord property
+        if (usage === 'ShortTermRental') {
+          status = 'Occupied';
+        } else {
+          status = seededRandom.current() < INITIAL_VACANCY_RATE ? 'Vacant' : 'Occupied';
+        }
+      }
+      
       const rentSpread = (price / 350000);
       const rent = 2000 * rentSpread + (seededRandom.current() - 0.5) * 100;
       return { id: i, ownerType, usage, price, rent, status };
@@ -215,7 +227,7 @@ export default function App() {
         seeker.income *= (1 + INCOME_GROWTH_RATE);
     });
     
-    const housedPopulation = newStock.filter(h => h.status !== 'Vacant').length;
+    const housedPopulation = newStock.filter(h => h.status !== 'Vacant' && h.usage !== 'ShortTermRental').length;
     const newEntrantCount = Math.floor((housedPopulation + newSeekerPool.length) * POPULATION_GROWTH_RATE);
 
     const randomInRange = (min, max) => min + seededRandom.current() * (max - min);
@@ -240,7 +252,7 @@ export default function App() {
     const homesForSale = Array.from(homesForSaleIndices).map(index => newStock[index]);
 
     newStock.forEach(home => {
-        if (home.ownerType !== 'homeowner' && home.status === 'Occupied' && seededRandom.current() < RENTAL_TURNOVER_RATE) {
+        if (home.ownerType !== 'homeowner' && home.usage === 'LongTermRental' && home.status === 'Occupied' && seededRandom.current() < RENTAL_TURNOVER_RATE) {
             home.status = 'Vacant';
             if (seededRandom.current() < RE_ENTRANT_RATE) {
               const roll = seededRandom.current();
@@ -274,6 +286,7 @@ export default function App() {
         const wasOccupiedRental = home.ownerType !== 'homeowner' && home.status === 'Occupied';
         if (type === 'seeker') {
             home.ownerType = 'homeowner';
+            home.usage = 'LongTermRental';
             home.status = 'OwnerOccupied';
             marketResults.current.purchasesByHomeowner++;
             affordableSeekers.sort((a,b) => b.income - a.income);
@@ -361,7 +374,7 @@ export default function App() {
   const handleRunSimulation = () => setSimulationRunning(prev => !prev);
   const handleReset = () => {
     setSimulationRunning(false);
-    setYear(0);
+    setYear(1);
     setTurnoverRate(4);
     setNewHomes(3);
     setYearsToRun(10);
@@ -475,7 +488,6 @@ export default function App() {
                <Card label="Landlord Purchases" value={marketResults.current.purchasesByLandlord} />
                <Card label="Converted to STR" value={marketResults.current.convertedToShortTerm} />
                <Card label="Displacements" value={marketResults.current.displacements} />
-               <Card label="Total Attrition" value={marketResults.current.totalAttrition} />
            </div>
         </main>
       </div>
