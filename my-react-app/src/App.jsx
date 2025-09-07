@@ -14,7 +14,6 @@ const RE_ENTRANT_RATE = 0.75;
 const STR_CONVERSION_CHANCE = 0.05;
 const STR_CAP_RATE = 0.03;
 const MAX_RENT_INCREASE = 0.08;
-const LANDLORD_OWNERSHIP_CAP = 0.50;
 const HOMEOWNER_TO_HOMEOWNER_SALE_CHANCE = 0.90;
 const FORECLOSURE_RATE = 0.15; // 15% of homeowners are foreclosed on during a collapse
 
@@ -44,6 +43,7 @@ export default function App() {
   const [initialSeekersCount, setInitialSeekersCount] = useState(36);
   const [initialHomeowners, setInitialHomeowners] = useState(198);
   const [initialLandlords, setInitialLandlords] = useState(102);
+  const [landlordCap, setLandlordCap] = useState(50); // New state for landlord ownership cap
   
   // --- Simulation State (runs the model) ---
   const [year, setYear] = useState(1);
@@ -51,7 +51,7 @@ export default function App() {
   const [seekerPool, setSeekerPool] = useState([]);
   const [simulationRunning, setSimulationRunning] = useState(false);
   const [simulationSpeed, setSimulationSpeed] = useState(500);
-  const [collapseTriggered, setCollapseTriggered] = useState(false); // New state for the collapse event
+  const [collapseTriggered, setCollapseTriggered] = useState(false);
 
   // --- Display State (shown on screen) ---
   const [displayData, setDisplayData] = useState({});
@@ -241,20 +241,15 @@ export default function App() {
     let newSeekerPool = structuredClone(seekerPool);
     const randomInRange = (min, max) => min + seededRandom.current() * (max - min);
 
-    // --- MORTGAGE COLLAPSE EVENT LOGIC ---
     if (collapseTriggered) {
         console.log("--- MORTGAGE COLLAPSE YEAR TRIGGERED ---");
-        const collapseAffordabilityMultiplier = 1.5; // Credit freeze
+        const collapseAffordabilityMultiplier = 1.5;
         
         const foreclosedHomes = newStock.filter(h => h.ownerType === 'homeowner' && seededRandom.current() < FORECLOSURE_RATE);
 
         foreclosedHomes.forEach(home => {
-            // Equity is wiped out, they become low-income seekers
             newSeekerPool.push({ id: nextSeekerId.current++, income: randomInRange(...INCOME_TIERS.bottom.range) });
-
             const affordableSeekers = newSeekerPool.filter(s => s.income * collapseAffordabilityMultiplier >= home.price);
-            
-            // In a collapse, landlords have a massive advantage
             const landlordWins = seededRandom.current() < 0.80; 
 
             if (landlordWins || affordableSeekers.length === 0) {
@@ -272,10 +267,8 @@ export default function App() {
                 newSeekerPool = newSeekerPool.filter(s => s.id !== buyer.id);
             }
         });
-
-        setCollapseTriggered(false); // Reset the trigger for the next year
+        setCollapseTriggered(false);
     
-    // --- NORMAL YEAR LOGIC ---
     } else {
       cumulativeIncomeGrowth.current *= (1 + INCOME_GROWTH_RATE);
       newSeekerPool.forEach(seeker => { seeker.income *= (1 + INCOME_GROWTH_RATE); });
@@ -332,7 +325,7 @@ export default function App() {
         }
         
         const landlordOwnershipRatio = newStock.filter(h => h.ownerType === 'landlord').length / newStock.length;
-        if (winnerType === 'landlord' && landlordOwnershipRatio >= LANDLORD_OWNERSHIP_CAP && seekerInTheRunning) {
+        if (winnerType === 'landlord' && landlordOwnershipRatio >= (landlordCap / 100) && seekerInTheRunning) {
           winnerType = 'seeker';
         }
     
@@ -396,7 +389,6 @@ export default function App() {
       }
     }
 
-    // --- Universal End-of-Year Logic ---
     const totalRentals = newStock.filter(h => h.ownerType !== 'homeowner' && h.usage === 'LongTermRental').length;
     const minVacant = Math.ceil(totalRentals * 0.015);
     let vacantUnits = newStock.filter(home => home.status === 'Vacant' && home.usage === 'LongTermRental');
@@ -422,7 +414,7 @@ export default function App() {
     setSeekerPool(newSeekerPool);
     setYear(prevYear => prevYear + 1);
     computeDisplayData(newStock, newSeekerPool, initialStats.current);
-  }, [housingStock, seekerPool, turnoverRate, newHomes, computeDisplayData, collapseTriggered]);
+  }, [housingStock, seekerPool, turnoverRate, newHomes, computeDisplayData, collapseTriggered, landlordCap]);
 
   // --- Effects ---
   useEffect(() => {
@@ -450,6 +442,7 @@ export default function App() {
     setInitialSeekersCount(36);
     setInitialHomeowners(198);
     setInitialLandlords(102);
+    setLandlordCap(50);
     setSimulationSpeed(500);
     setupSimulation();
   };
@@ -480,12 +473,18 @@ export default function App() {
                             <input type="number" value={initialSeekersCount} onChange={e => setInitialSeekersCount(Number(e.target.value))} className="w-24 p-1 border rounded-md text-center"/>
                         </div>
                         <div>
+                            <label className="text-xs font-medium text-gray-500 block">Landlord Cap (%)</label>
+                            <input type="number" value={landlordCap} onChange={e => setLandlordCap(Number(e.target.value))} className="w-24 p-1 border rounded-md text-center"/>
+                        </div>
+                    </div>
+                     <div className="bg-white p-3 rounded-lg shadow flex gap-4 items-center">
+                        <div>
                             <label className="text-xs font-medium text-gray-500 block">Homeowners</label>
-                            <input type="number" value={initialHomeowners} min={0} max={HOMES_TOTAL} onChange={e => setInitialHomeowners(Number(e.target.value))} className="w-20 p-1 border rounded-md text-center" />
+                            <input type="number" value={initialHomeowners} min={0} max={HOMES_TOTAL} onChange={e => setInitialHomeowners(Number(e.target.value))} className="w-24 p-1 border rounded-md text-center" />
                         </div>
                         <div>
                             <label className="text-xs font-medium text-gray-500 block">Landlords</label>
-                            <input type="number" value={initialLandlords} min={0} max={HOMES_TOTAL} onChange={e => setInitialLandlords(Number(e.target.value))} className="w-20 p-1 border rounded-md text-center" />
+                            <input type="number" value={initialLandlords} min={0} max={HOMES_TOTAL} onChange={e => setInitialLandlords(Number(e.target.value))} className="w-24 p-1 border rounded-md text-center" />
                         </div>
                     </div>
                 </div>
